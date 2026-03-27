@@ -1,0 +1,14 @@
+# Node.js
+meetscribe-server/node_modules/
+meetscribe-server/uploads/
+meetscribe-server/output/
+
+meetscribe-server/credentials.json
+meetscribe-server/oauth-credentials.json
+meetscribe-server/token.json
+
+__pycache__/
+
+# OS
+Thumbs.db
+.DS_Store
