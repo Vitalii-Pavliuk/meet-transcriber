@@ -7,8 +7,6 @@ const transcriptBox = document.getElementById('transcript-box');
 const driveLink = document.getElementById('drive-link');
 
 let timerInterval = null;
-let mediaRecorder = null;
-let audioChunks = [];
 let recordingStartTime = null;
 
 function formatTime(sec) {
@@ -24,7 +22,7 @@ function formatSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
 }
 
-function setUI(state) {
+function setUI(state, extra = {}) {
   transcriptBox.style.display = 'none';
   driveLink.style.display = 'none';
   startBtn.style.display = 'none';
@@ -53,99 +51,77 @@ function setUI(state) {
       badge.className = 'done';
       startBtn.style.display = 'block';
       sizeEl.textContent = '';
+      if (extra.transcript) {
+        transcriptBox.style.display = 'block';
+        transcriptBox.textContent = extra.transcript.length > 500
+          ? extra.transcript.slice(0, 500) + '...'
+          : extra.transcript;
+      }
+      if (extra.driveUrl) {
+        driveLink.style.display = 'block';
+        driveLink.href = extra.driveUrl;
+      }
       break;
     case 'error':
       badge.textContent = 'Помилка';
       badge.className = 'idle';
       startBtn.style.display = 'block';
+      if (extra.error) sizeEl.textContent = extra.error;
       break;
   }
 }
 
-function updateTimer() {
-  if (!recordingStartTime) return;
-  const sec = Math.floor((Date.now() - recordingStartTime) / 1000);
-  timer.textContent = formatTime(sec);
-  const totalSize = audioChunks.reduce((acc, c) => acc + c.size, 0);
-  sizeEl.textContent = formatSize(totalSize);
+function startTimer(startTime) {
+  recordingStartTime = startTime;
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    const sec = Math.floor((Date.now() - recordingStartTime) / 1000);
+    timer.textContent = formatTime(sec);
+
+    chrome.runtime.sendMessage({ action: 'GET_STATUS' }, (res) => {
+      if (res) sizeEl.textContent = formatSize(res.size);
+    });
+  }, 1000);
 }
 
+chrome.runtime.sendMessage({ action: 'GET_STATUS' }, (res) => {
+  if (res?.recording) {
+    setUI('recording');
+    startTimer(res.startTime);
+  } else {
+    setUI('idle');
+  }
+});
+
 startBtn.addEventListener('click', () => {
-  chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
-    if (chrome.runtime.lastError || !stream) {
-      setUI('error');
-      sizeEl.textContent = chrome.runtime.lastError?.message || 'Немає доступу до аудіо';
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (!tab || !tab.url?.includes('meet.google.com')) {
+      setUI('error', { error: 'Відкрийте Google Meet' });
       return;
     }
 
-    audioChunks = [];
-    recordingStartTime = Date.now();
-
-    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-    mediaRecorder.start(5000);
-
-    setUI('recording');
-    timerInterval = setInterval(updateTimer, 1000);
+    chrome.runtime.sendMessage({ action: 'START_RECORDING', tabId: tab.id }, (res) => {
+      if (res?.ok) {
+        setUI('recording');
+        startTimer(Date.now());
+      } else {
+        setUI('error', { error: res?.error || 'Не вдалось почати запис' });
+      }
+    });
   });
 });
 
 stopBtn.addEventListener('click', () => {
-  if (!mediaRecorder) return;
-
   clearInterval(timerInterval);
   timerInterval = null;
+  setUI('processing');
 
-  mediaRecorder.stop();
-  mediaRecorder.stream.getTracks().forEach(t => t.stop());
-
-  mediaRecorder.onstop = async () => {
-    if (audioChunks.length === 0) {
-      setUI('error');
-      sizeEl.textContent = 'Немає аудіо даних';
-      return;
+  chrome.runtime.sendMessage({ action: 'STOP_RECORDING' }, (res) => {
+    if (res?.ok) {
+      setUI('done', { transcript: res.transcript, driveUrl: res.driveUrl });
+    } else {
+      setUI('error', { error: res?.error || 'Помилка при зупинці' });
     }
-
-    setUI('processing');
-    const blob = new Blob(audioChunks, { type: 'audio/webm' });
-
-    audioChunks = [];
-    recordingStartTime = null;
-    mediaRecorder = null;
-
-    try {
-      const formData = new FormData();
-      formData.append('audio', blob, `recording-${Date.now()}.webm`);
-
-      const res = await fetch('http://localhost:3000/upload', {
-        method: 'POST',
-        body: formData
-      });
-      const data = await res.json();
-
-      if (data.ok) {
-        setUI('done');
-        if (data.transcript) {
-          transcriptBox.style.display = 'block';
-          transcriptBox.textContent = data.transcript.length > 500
-            ? data.transcript.slice(0, 500) + '...'
-            : data.transcript;
-        }
-        if (data.driveUrl) {
-          driveLink.style.display = 'block';
-          driveLink.href = data.driveUrl;
-        }
-      } else {
-        setUI('error');
-        sizeEl.textContent = data.error || 'Помилка сервера';
-      }
-    } catch (err) {
-      setUI('error');
-      sizeEl.textContent = 'Сервер недоступний';
-    }
-  };
+  });
 });
-
-setUI('idle');
