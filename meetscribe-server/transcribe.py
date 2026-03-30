@@ -1,16 +1,20 @@
 import sys
 import json
+import argparse
 import whisper
 
-def transcribe(audio_path):
+def transcribe(audio_path, language=None):
     model = whisper.load_model("base")
 
-    result = model.transcribe(
-        audio_path,
+    kwargs = dict(
         verbose=False,
         word_timestamps=False,
-        fp16=False
+        fp16=False,
     )
+    if language:
+        kwargs['language'] = language
+
+    result = model.transcribe(audio_path, **kwargs)
 
     lines = []
     for segment in result["segments"]:
@@ -23,19 +27,21 @@ def transcribe(audio_path):
         if text:
             lines.append(f"{timestamp} {text}")
 
-    return "\n".join(lines)
+    detected = result.get("language", language or "unknown")
+    return "\n".join(lines), detected
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.stdout.write(json.dumps({"error": "Не вказано шлях до аудіофайлу"}) + "\n")
-        sys.stdout.flush()
-        sys.exit(1)
-
-    audio_path = sys.argv[1]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("audio_path")
+    parser.add_argument("--language", default=None)
+    args = parser.parse_args()
 
     try:
-        transcript = transcribe(audio_path)
-        print(json.dumps({"transcript": transcript}, ensure_ascii=False), flush=True)
+        transcript, detected_lang = transcribe(args.audio_path, args.language)
+        print(json.dumps({
+            "transcript": transcript,
+            "language": detected_lang,
+        }, ensure_ascii=False), flush=True)
     except Exception as e:
         print(json.dumps({"error": str(e)}), flush=True)
         sys.exit(1)

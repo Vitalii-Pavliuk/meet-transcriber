@@ -1,13 +1,16 @@
-const badge = document.getElementById('status-badge');
-const timer = document.getElementById('timer');
-const sizeEl = document.getElementById('size');
-const startBtn = document.getElementById('start-btn');
-const stopBtn = document.getElementById('stop-btn');
+const badge       = document.getElementById('status-badge');
+const timer       = document.getElementById('timer');
+const sizeEl      = document.getElementById('size');
+const startBtn    = document.getElementById('start-btn');
+const stopBtn     = document.getElementById('stop-btn');
+const cancelBtn   = document.getElementById('cancel-btn');
 const transcriptBox = document.getElementById('transcript-box');
-const driveLink = document.getElementById('drive-link');
+const driveBtn    = document.getElementById('drive-btn');
+const langSelect  = document.getElementById('lang-select');
 
 let timerInterval = null;
 let recordingStartTime = null;
+let pendingDriveUrl = null; 
 
 function formatTime(sec) {
   const h = String(Math.floor(sec / 3600)).padStart(2, '0');
@@ -24,9 +27,12 @@ function formatSize(bytes) {
 
 function setUI(state, extra = {}) {
   transcriptBox.style.display = 'none';
-  driveLink.style.display = 'none';
+  driveBtn.style.display = 'none';
   startBtn.style.display = 'none';
-  stopBtn.style.display = 'none';
+  stopBtn.style.display   = 'none';
+  cancelBtn.style.display = 'none';
+  langSelect.disabled = false;
+  pendingDriveUrl = null;
 
   switch (state) {
     case 'idle':
@@ -36,32 +42,41 @@ function setUI(state, extra = {}) {
       timer.textContent = '00:00:00';
       sizeEl.textContent = '';
       break;
+
     case 'recording':
       badge.textContent = 'Записуємо...';
       badge.className = 'recording';
       stopBtn.style.display = 'block';
+      cancelBtn.style.display = 'block';
+      langSelect.disabled = true;
       break;
+
     case 'processing':
       badge.textContent = 'Обробляємо...';
       badge.className = 'processing';
-      sizeEl.textContent = 'Whisper транскрибує, зачекайте...';
+      sizeEl.textContent = 'Whisper транскрибує — можна закрити вікно';
+      langSelect.disabled = true;
       break;
+
     case 'done':
       badge.textContent = 'Готово!';
       badge.className = 'done';
       startBtn.style.display = 'block';
-      sizeEl.textContent = '';
+      sizeEl.textContent = 'Транскрипт нижче — натисніть Drive щоб зберегти';
       if (extra.transcript) {
         transcriptBox.style.display = 'block';
-        transcriptBox.textContent = extra.transcript.length > 500
-          ? extra.transcript.slice(0, 500) + '...'
+        transcriptBox.textContent = extra.transcript.length > 800
+          ? extra.transcript.slice(0, 800) + '\n...(повний текст на Drive)'
           : extra.transcript;
       }
       if (extra.driveUrl) {
-        driveLink.style.display = 'block';
-        driveLink.href = extra.driveUrl;
+        pendingDriveUrl = extra.driveUrl;
+        driveBtn.style.display = 'block';
+        driveBtn.disabled = false;
+        driveBtn.textContent = 'Зберегти на Google Drive';
       }
       break;
+
     case 'error':
       badge.textContent = 'Помилка';
       badge.className = 'idle';
@@ -77,46 +92,51 @@ function startTimer(startTime) {
   timerInterval = setInterval(() => {
     const sec = Math.floor((Date.now() - recordingStartTime) / 1000);
     timer.textContent = formatTime(sec);
-
     chrome.runtime.sendMessage({ action: 'GET_STATUS' }, (res) => {
       if (res) sizeEl.textContent = formatSize(res.size);
     });
   }, 1000);
 }
 
-chrome.runtime.sendMessage({ action: 'GET_STATUS' }, (res) => {
-  if (res?.recording) {
-    setUI('recording');
-    startTimer(res.startTime);
-  } else {
-    setUI('idle');
-  }
+function stopTimer() {
+  clearInterval(timerInterval);
+  timerInterval = null;
+}
+
+langSelect.addEventListener('change', () => {
+  chrome.storage.local.set({ language: langSelect.value });
 });
 
 startBtn.addEventListener('click', () => {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
-    if (!tab || !tab.url?.includes('meet.google.com')) {
+    if (!tab?.url?.includes('meet.google.com')) {
       setUI('error', { error: 'Відкрийте Google Meet' });
       return;
     }
 
-    chrome.runtime.sendMessage({ action: 'START_RECORDING', tabId: tab.id }, (res) => {
-      if (res?.ok) {
-        setUI('recording');
-        startTimer(Date.now());
-      } else {
-        setUI('error', { error: res?.error || 'Не вдалось почати запис' });
+    const rawTitle = tab.title || '';
+    const meetTitle = rawTitle.replace(/\s*[-–]\s*Google Meet\s*$/i, '').trim() || null;
+    const language = langSelect.value; 
+
+    chrome.storage.session.remove('lastResult');
+    chrome.runtime.sendMessage(
+      { action: 'START_RECORDING', tabId: tab.id, meetTitle, language },
+      (res) => {
+        if (res?.ok) {
+          setUI('recording');
+          startTimer(Date.now());
+        } else {
+          setUI('error', { error: res?.error || 'Не вдалось почати запис' });
+        }
       }
-    });
+    );
   });
 });
 
 stopBtn.addEventListener('click', () => {
-  clearInterval(timerInterval);
-  timerInterval = null;
+  stopTimer();
   setUI('processing');
-
   chrome.runtime.sendMessage({ action: 'STOP_RECORDING' }, (res) => {
     if (res?.ok) {
       setUI('done', { transcript: res.transcript, driveUrl: res.driveUrl });
@@ -125,3 +145,46 @@ stopBtn.addEventListener('click', () => {
     }
   });
 });
+
+cancelBtn.addEventListener('click', () => {
+  if (!confirm('Скасувати запис? Аудіо буде втрачено.')) return;
+  stopTimer();
+  chrome.runtime.sendMessage({ action: 'CANCEL_RECORDING' }, () => {
+    setUI('idle');
+    timer.textContent = '00:00:00';
+    sizeEl.textContent = '';
+  });
+});
+
+driveBtn.addEventListener('click', () => {
+  if (!pendingDriveUrl) return;
+  driveBtn.disabled = true;
+  driveBtn.textContent = 'Збережено ✓';
+  chrome.tabs.create({ url: pendingDriveUrl });
+  chrome.storage.session.remove('lastResult');
+  chrome.runtime.sendMessage({ action: 'CONFIRM_DRIVE_UPLOAD' });
+});
+
+async function init() {
+  const stored = await chrome.storage.local.get('language');
+  if (stored.language) langSelect.value = stored.language;
+
+  const session = await chrome.storage.session.get('lastResult');
+  if (session.lastResult) {
+    const r = session.lastResult;
+    setUI('done', { transcript: r.transcript, driveUrl: r.driveUrl });
+    return;
+  }
+
+  chrome.runtime.sendMessage({ action: 'GET_STATUS' }, (res) => {
+    if (res?.recording) {
+      setUI('recording');
+      langSelect.disabled = true;
+      startTimer(res.startTime);
+    } else {
+      setUI('idle');
+    }
+  });
+}
+
+init();

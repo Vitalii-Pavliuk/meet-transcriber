@@ -2,12 +2,13 @@
   "manifest_version": 3,
   "name": "MeetScribe",
   "version": "1.0",
- "permissions": [
+  "permissions": [
     "tabCapture",
     "offscreen",
     "storage",
     "identity",
-    "tabs"
+    "tabs",
+    "notifications"
   ],
   "host_permissions": [
     "https://meet.google.com/*",

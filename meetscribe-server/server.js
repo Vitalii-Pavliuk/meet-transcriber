@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -86,7 +87,10 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
   const webmPath = req.file.path;
   const mp3Path = webmPath + '.mp3';
   const timestamp = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
-  const filename = `MeetScribe_${timestamp}`;
+  const rawTitle = req.body?.meetTitle || '';
+  const safeTitle = rawTitle.replace(/[^a-zA-Z0-9а-яА-ЯіІїЇєЄ\s\-_]/g, '').trim().slice(0, 60);
+  const filename = safeTitle ? `${safeTitle}_${timestamp}` : `MeetScribe_${timestamp}`;
+  const language = req.body?.language || null;
 
   try {
     console.log(`\n→ Отримано файл: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)} МБ)`);
@@ -94,7 +98,7 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
     await convertToMp3(webmPath, mp3Path);
     console.log('✓ Конвертація в mp3 завершена');
 
-    const transcript = await runWhisper(mp3Path);
+    const transcript = await runWhisper(mp3Path, language);
     console.log('✓ Транскрибація завершена, символів:', transcript.length);
 
     const localDir = path.join(__dirname, 'output');
@@ -103,7 +107,7 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
     fs.writeFileSync(path.join(localDir, `${filename}.txt`), transcript, 'utf-8');
     console.log(`✓ Збережено локально: output/${filename}`);
 
-    let driveUrl = null;
+    let driveUrl = `https://drive.google.com/drive/folders/${FOLDER_ID}`;
     try {
       driveUrl = await uploadToDrive(mp3Path, transcript, filename);
       console.log('✓ Завантажено на Drive:', driveUrl);
@@ -132,12 +136,12 @@ function convertToMp3(input, output) {
   });
 }
 
-function runWhisper(audioPath) {
+function runWhisper(audioPath, language = null) {
   return new Promise((resolve, reject) => {
-    const timeout = 20 * 60 * 1000; // 20 хвилин
+    const timeout = 20 * 60 * 1000;
+    const langArg = language ? ['--language', language] : [];
 
-    // -u = unbuffered, щоб stdout не буферизувався
-    const proc = spawn('python', ['-u', 'transcribe.py', audioPath], {
+    const proc = spawn('python', ['-u', 'transcribe.py', audioPath, ...langArg], {
       cwd: __dirname,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     });
