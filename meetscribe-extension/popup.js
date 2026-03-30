@@ -1,16 +1,16 @@
-const badge       = document.getElementById('status-badge');
-const timer       = document.getElementById('timer');
-const sizeEl      = document.getElementById('size');
-const startBtn    = document.getElementById('start-btn');
-const stopBtn     = document.getElementById('stop-btn');
-const cancelBtn   = document.getElementById('cancel-btn');
+const badge = document.getElementById('status-badge');
+const timer = document.getElementById('timer');
+const sizeEl = document.getElementById('size');
+const startBtn = document.getElementById('start-btn');
+const stopBtn = document.getElementById('stop-btn');
+const cancelBtn = document.getElementById('cancel-btn');
 const transcriptBox = document.getElementById('transcript-box');
-const driveBtn    = document.getElementById('drive-btn');
-const langSelect  = document.getElementById('lang-select');
+const driveBtn = document.getElementById('drive-btn');
+const langSelect = document.getElementById('lang-select');
 
 let timerInterval = null;
 let recordingStartTime = null;
-let pendingDriveUrl = null; 
+let pendingDriveUrl = null;
 
 function formatTime(sec) {
   const h = String(Math.floor(sec / 3600)).padStart(2, '0');
@@ -26,52 +26,42 @@ function formatSize(bytes) {
 }
 
 function setUI(state, extra = {}) {
-  transcriptBox.style.display = 'none';
-  driveBtn.style.display = 'none';
-  startBtn.style.display = 'none';
-  stopBtn.style.display   = 'none';
-  cancelBtn.style.display = 'none';
-  langSelect.disabled = false;
+  document.body.className = `state-${state}`;
+  
+  langSelect.disabled = (state === 'recording' || state === 'processing');
   pendingDriveUrl = null;
 
   switch (state) {
     case 'idle':
       badge.textContent = 'Готовий до запису';
-      badge.className = 'idle';
-      startBtn.style.display = 'block';
+      badge.className = 'status-badge idle';
       timer.textContent = '00:00:00';
       sizeEl.textContent = '';
       break;
 
     case 'recording':
       badge.textContent = 'Записуємо...';
-      badge.className = 'recording';
-      stopBtn.style.display = 'block';
-      cancelBtn.style.display = 'block';
-      langSelect.disabled = true;
+      badge.className = 'status-badge recording';
       break;
 
     case 'processing':
       badge.textContent = 'Обробляємо...';
-      badge.className = 'processing';
+      badge.className = 'status-badge processing';
       sizeEl.textContent = 'Whisper транскрибує — можна закрити вікно';
-      langSelect.disabled = true;
       break;
 
     case 'done':
       badge.textContent = 'Готово!';
-      badge.className = 'done';
-      startBtn.style.display = 'block';
+      badge.className = 'status-badge done';
       sizeEl.textContent = 'Транскрипт нижче — натисніть Drive щоб зберегти';
+      
       if (extra.transcript) {
-        transcriptBox.style.display = 'block';
         transcriptBox.textContent = extra.transcript.length > 800
           ? extra.transcript.slice(0, 800) + '\n...(повний текст на Drive)'
           : extra.transcript;
       }
       if (extra.driveUrl) {
         pendingDriveUrl = extra.driveUrl;
-        driveBtn.style.display = 'block';
         driveBtn.disabled = false;
         driveBtn.textContent = 'Зберегти на Google Drive';
       }
@@ -79,8 +69,7 @@ function setUI(state, extra = {}) {
 
     case 'error':
       badge.textContent = 'Помилка';
-      badge.className = 'idle';
-      startBtn.style.display = 'block';
+      badge.className = 'status-badge idle';
       if (extra.error) sizeEl.textContent = extra.error;
       break;
   }
@@ -117,7 +106,7 @@ startBtn.addEventListener('click', () => {
 
     const rawTitle = tab.title || '';
     const meetTitle = rawTitle.replace(/\s*[-–]\s*Google Meet\s*$/i, '').trim() || null;
-    const language = langSelect.value; 
+    const language = langSelect.value;
 
     chrome.storage.session.remove('lastResult');
     chrome.runtime.sendMessage(
@@ -151,8 +140,6 @@ cancelBtn.addEventListener('click', () => {
   stopTimer();
   chrome.runtime.sendMessage({ action: 'CANCEL_RECORDING' }, () => {
     setUI('idle');
-    timer.textContent = '00:00:00';
-    sizeEl.textContent = '';
   });
 });
 
@@ -179,7 +166,6 @@ async function init() {
   chrome.runtime.sendMessage({ action: 'GET_STATUS' }, (res) => {
     if (res?.recording) {
       setUI('recording');
-      langSelect.disabled = true;
       startTimer(res.startTime);
     } else {
       setUI('idle');
