@@ -167,3 +167,45 @@ body.state-done #drive-btn {
 body.state-done .transcript-box {
   display: block;
 }
+
+.speaker-mapping {
+  display: none;
+  background: #f9f9f9;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.speaker-mapping h4 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  color: #444;
+}
+
+.speaker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.speaker-row label {
+  width: 110px;
+  font-family: monospace;
+  color: #666;
+  font-size: 12px;
+}
+
+.speaker-row input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+body.state-done .speaker-mapping {
+  display: block;
+}

@@ -108,15 +108,19 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
     console.log(`✓ Збережено локально: output/${filename}`);
 
     let driveUrl = `https://drive.google.com/drive/folders/${FOLDER_ID}`;
+    let driveTxtId = null;
+
     try {
-      driveUrl = await uploadToDrive(mp3Path, transcript, filename);
+      const driveData = await uploadToDrive(mp3Path, transcript, filename);
+      driveUrl = driveData.folderUrl;
+      driveTxtId = driveData.txtId;
       console.log('✓ Завантажено на Drive:', driveUrl);
     } catch (driveErr) {
       console.warn('⚠ Drive upload пропущено:', driveErr.message);
     }
 
     cleanup(webmPath, mp3Path);
-    res.json({ ok: true, transcript, driveUrl });
+    res.json({ ok: true, transcript, driveUrl, driveTxtId });
 
   } catch (err) {
     console.error('✗ Помилка:', err.message);
@@ -170,15 +174,9 @@ function runWhisper(audioPath, language = null) {
       clearTimeout(timer);
       if (killed) return;
 
-      console.log('\n[Whisper] exit code:', code);
-      console.log('[Whisper] stdout length:', stdoutData.length);
-      console.log('[Whisper] stdout raw:', JSON.stringify(stdoutData.slice(0, 300)));
-
       const jsonMatch = stdoutData.match(/\{.*\}/s);
       if (!jsonMatch) {
-        reject(new Error(
-          `Whisper не повернув JSON. Exit: ${code}. stdout: "${stdoutData.slice(0, 100)}"`
-        ));
+        reject(new Error(`Whisper не повернув JSON. Exit: ${code}`));
         return;
       }
 
@@ -187,37 +185,58 @@ function runWhisper(audioPath, language = null) {
         if (result.error) {
           reject(new Error(result.error));
         } else if (typeof result.transcript !== 'string') {
-          reject(new Error('Whisper повернув неочікуваний формат: ' + jsonMatch[0].slice(0, 100)));
+          reject(new Error('Whisper повернув неочікуваний формат'));
         } else {
           resolve(result.transcript);
         }
       } catch (e) {
-        reject(new Error('JSON.parse failed: ' + jsonMatch[0].slice(0, 100)));
+        reject(new Error('JSON.parse failed'));
       }
     });
 
     proc.on('error', (err) => {
       clearTimeout(timer);
-      reject(new Error(
-        'Не вдалось запустити Python. Переконайтесь що python є в PATH. ' + err.message
-      ));
+      reject(new Error('Не вдалось запустити Python: ' + err.message));
     });
   });
 }
 
 async function uploadToDrive(mp3Path, transcript, filename) {
-  await Promise.all([
-    drive.files.create({
-      requestBody: { name: `${filename}.mp3`, mimeType: 'audio/mpeg', parents: [FOLDER_ID] },
-      media: { mimeType: 'audio/mpeg', body: fs.createReadStream(mp3Path) }
-    }),
-    drive.files.create({
-      requestBody: { name: `${filename}.txt`, mimeType: 'text/plain', parents: [FOLDER_ID] },
-      media: { mimeType: 'text/plain', body: Readable.from([transcript]) }
-    })
-  ]);
-  return `https://drive.google.com/drive/folders/${FOLDER_ID}`;
+  const mp3Result = await drive.files.create({
+    requestBody: { name: `${filename}.mp3`, mimeType: 'audio/mpeg', parents: [FOLDER_ID] },
+    media: { mimeType: 'audio/mpeg', body: fs.createReadStream(mp3Path) }
+  });
+
+  const txtResult = await drive.files.create({
+    requestBody: { name: `${filename}.txt`, mimeType: 'text/plain', parents: [FOLDER_ID] },
+    media: { mimeType: 'text/plain', body: Readable.from([transcript]) }
+  });
+
+  return {
+    folderUrl: `https://drive.google.com/drive/folders/${FOLDER_ID}`,
+    txtId: txtResult.data.id
+  };
 }
+
+app.post('/update-transcript', async (req, res) => {
+  const { txtId, transcript } = req.body;
+  if (!txtId || !transcript) {
+    return res.status(400).json({ ok: false, error: 'txtId або transcript відсутній' });
+  }
+
+  try {
+    await drive.files.update({
+      fileId: txtId,
+      media: {
+        mimeType: 'text/plain',
+        body: Readable.from([transcript])
+      }
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
