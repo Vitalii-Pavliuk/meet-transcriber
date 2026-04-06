@@ -136,6 +136,7 @@ function stopRecording(sendResponse) {
           ok: true,
           transcript: data.transcript,
           driveUrl: data.driveUrl,
+          driveFilename: data.driveFilename,
           meetTitle: savedTitle,
         });
       } else {

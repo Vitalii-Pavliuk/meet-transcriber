@@ -12,6 +12,7 @@ const url = require('url');
 
 const app = express();
 app.use(cors({ origin: '*' }));
+app.use(express.json());
 
 const upload = multer({
   dest: 'uploads/',
@@ -108,19 +109,17 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
     console.log(`✓ Збережено локально: output/${filename}`);
 
     let driveUrl = `https://drive.google.com/drive/folders/${FOLDER_ID}`;
-    let driveTxtId = null;
 
     try {
-      const driveData = await uploadToDrive(mp3Path, transcript, filename);
+      const driveData = await uploadMp3ToDrive(mp3Path, filename);
       driveUrl = driveData.folderUrl;
-      driveTxtId = driveData.txtId;
-      console.log('✓ Завантажено на Drive:', driveUrl);
+      console.log('✓ MP3 завантажено на Drive:', driveUrl);
     } catch (driveErr) {
       console.warn('⚠ Drive upload пропущено:', driveErr.message);
     }
 
     cleanup(webmPath, mp3Path);
-    res.json({ ok: true, transcript, driveUrl, driveTxtId });
+    res.json({ ok: true, transcript, driveUrl, driveFilename: filename });
 
   } catch (err) {
     console.error('✗ Помилка:', err.message);
@@ -201,38 +200,38 @@ function runWhisper(audioPath, language = null) {
   });
 }
 
-async function uploadToDrive(mp3Path, transcript, filename) {
-  const mp3Result = await drive.files.create({
+async function uploadMp3ToDrive(mp3Path, filename) {
+  await drive.files.create({
     requestBody: { name: `${filename}.mp3`, mimeType: 'audio/mpeg', parents: [FOLDER_ID] },
     media: { mimeType: 'audio/mpeg', body: fs.createReadStream(mp3Path) }
   });
 
-  const txtResult = await drive.files.create({
-    requestBody: { name: `${filename}.txt`, mimeType: 'text/plain', parents: [FOLDER_ID] },
-    media: { mimeType: 'text/plain', body: Readable.from([transcript]) }
-  });
-
   return {
     folderUrl: `https://drive.google.com/drive/folders/${FOLDER_ID}`,
-    txtId: txtResult.data.id
   };
 }
 
-app.post('/update-transcript', async (req, res) => {
-  const { txtId, transcript } = req.body;
-  if (!txtId || !transcript) {
-    return res.status(400).json({ ok: false, error: 'txtId або transcript відсутній' });
+function sanitizeDriveFilename(name) {
+  if (typeof name !== 'string') return '';
+  return name.replace(/[^a-zA-Z0-9а-яА-ЯіІїЇєЄ\s\-_]/g, '').trim().slice(0, 80);
+}
+
+app.post('/save-transcript', async (req, res) => {
+  const filename = sanitizeDriveFilename(req.body?.filename);
+  const transcript = req.body?.transcript;
+  if (!filename || typeof transcript !== 'string') {
+    return res.status(400).json({ ok: false, error: 'filename або transcript відсутній' });
   }
 
   try {
-    await drive.files.update({
-      fileId: txtId,
-      media: {
-        mimeType: 'text/plain',
-        body: Readable.from([transcript])
-      }
+    await drive.files.create({
+      requestBody: { name: `${filename}.txt`, mimeType: 'text/plain', parents: [FOLDER_ID] },
+      media: { mimeType: 'text/plain', body: Readable.from([transcript]) }
     });
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      driveUrl: `https://drive.google.com/drive/folders/${FOLDER_ID}`,
+    });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

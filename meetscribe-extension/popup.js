@@ -3,7 +3,7 @@ const timer = document.getElementById('timer');
 const sizeEl = document.getElementById('size');
 const startBtn = document.getElementById('start-btn');
 const stopBtn = document.getElementById('stop-btn');
-const cancelBtn = document.getElementById('cancel-btn');
+const cancelBtn = document.getElementById('cancel-btn'); 
 const transcriptBox = document.getElementById('transcript-box');
 const driveBtn = document.getElementById('drive-btn');
 const langSelect = document.getElementById('lang-select');
@@ -15,7 +15,7 @@ let timerInterval = null;
 let recordingStartTime = null;
 let pendingDriveUrl = null;
 let currentTranscript = '';
-let currentDriveTxtId = null;
+let currentDriveFilename = null;
 let speakerMapping = {};
 
 function formatTime(sec) {
@@ -63,18 +63,18 @@ function setUI(state, extra = {}) {
       sizeEl.textContent = 'Транскрипт нижче — призначте імена та збережіть';
 
       currentTranscript = extra.transcript || '';
-      currentDriveTxtId = extra.driveTxtId || null;
+      currentDriveFilename = extra.driveFilename || null;
       pendingDriveUrl = extra.driveUrl;
 
       if (extra.transcript) {
         transcriptBox.textContent = extra.transcript.length > 800
-          ? extra.transcript.slice(0, 800) + '\n...(повний текст на Drive)'
+          ? extra.transcript.slice(0, 800) + '\n...(повний текст після збереження на Drive)'
           : extra.transcript;
       }
 
-      renderSpeakerMapping(extra.transcript);
+      const hasSpeakers = renderSpeakerMapping(extra.transcript);
       if (extra.driveUrl) {
-        driveBtn.disabled = false;
+        driveBtn.disabled = hasSpeakers;
         driveBtn.textContent = 'Зберегти на Google Drive';
       }
       break;
@@ -113,7 +113,7 @@ function renderSpeakerMapping(transcript) {
 
   if (uniqueSpeakers.length === 0) {
     speakerMappingDiv.style.display = 'none';
-    return;
+    return false;
   }
 
   speakerMappingDiv.style.display = 'block';
@@ -128,6 +128,7 @@ function renderSpeakerMapping(transcript) {
     `;
     speakerList.appendChild(row);
   });
+  return true;
 }
 
 langSelect.addEventListener('change', () => {
@@ -169,7 +170,7 @@ stopBtn.addEventListener('click', () => {
       setUI('done', { 
         transcript: res.transcript, 
         driveUrl: res.driveUrl,
-        driveTxtId: res.driveTxtId 
+        driveFilename: res.driveFilename 
       });
     } else {
       setUI('error', { error: res?.error || 'Помилка при зупинці' });
@@ -187,48 +188,63 @@ cancelBtn.addEventListener('click', () => {
 
 applyNamesBtn.addEventListener('click', () => {
   const inputs = document.querySelectorAll('#speaker-list input');
-  let newTranscript = currentTranscript;
+  if (inputs.length > 0) {
+    for (const input of inputs) {
+      if (!input.value.trim()) {
+        alert('Введіть імена для всіх спікерів.');
+        return;
+      }
+    }
+  }
 
+  let newTranscript = currentTranscript;
   inputs.forEach(input => {
     const speaker = input.dataset.speaker;
     const name = input.value.trim();
-    if (name) {
-      speakerMapping[speaker] = name;
-      const regex = new RegExp(speaker + ':', 'g');
-      newTranscript = newTranscript.replace(regex, name + ':');
-    }
+    speakerMapping[speaker] = name;
+    const regex = new RegExp(speaker + ':', 'g');
+    newTranscript = newTranscript.replace(regex, name + ':');
   });
 
   currentTranscript = newTranscript;
   transcriptBox.textContent = newTranscript.length > 800
-    ? newTranscript.slice(0, 800) + '\n...(повний текст на Drive)'
+    ? newTranscript.slice(0, 800) + '\n...(повний текст після збереження на Drive)'
     : newTranscript;
 
-  driveBtn.textContent = 'Зберегти на Google Drive (імена оновлено)';
+  driveBtn.disabled = false;
+  driveBtn.textContent = 'Зберегти на Google Drive';
 });
 
 driveBtn.addEventListener('click', async () => {
-  if (!pendingDriveUrl) return;
+  if (!pendingDriveUrl || !currentDriveFilename) return;
 
   driveBtn.disabled = true;
-  driveBtn.textContent = 'Збережено ✓';
+  driveBtn.textContent = 'Збереження...';
 
-  if (currentDriveTxtId && currentTranscript) {
-    try {
-      await fetch('http://localhost:3000/update-transcript', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          txtId: currentDriveTxtId,
-          transcript: currentTranscript
-        })
-      });
-    } catch (e) {
-      console.warn('Не вдалося оновити транскрипт:', e);
+  try {
+    const res = await fetch('http://localhost:3000/save-transcript', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: currentDriveFilename,
+        transcript: currentTranscript
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      driveBtn.disabled = false;
+      driveBtn.textContent = 'Зберегти на Google Drive';
+      alert(data.error || 'Не вдалося зберегти транскрипт');
+      return;
     }
+  } catch (e) {
+    driveBtn.disabled = false;
+    driveBtn.textContent = 'Зберегти на Google Drive';
+    alert('Сервер недоступний — запустіть node server.js');
+    return;
   }
 
-  chrome.tabs.create({ url: pendingDriveUrl });
+  driveBtn.textContent = 'Збережено ✓';
   chrome.storage.session.remove('lastResult');
   chrome.runtime.sendMessage({ action: 'CONFIRM_DRIVE_UPLOAD' });
 });
@@ -243,7 +259,7 @@ async function init() {
     setUI('done', { 
       transcript: r.transcript, 
       driveUrl: r.driveUrl,
-      driveTxtId: r.driveTxtId 
+      driveFilename: r.driveFilename 
     });
     return;
   }
