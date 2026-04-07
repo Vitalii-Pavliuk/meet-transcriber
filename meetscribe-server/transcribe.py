@@ -14,10 +14,9 @@ def transcribe(audio_path, language=None):
     hf_token = os.getenv("HF_TOKEN")
 
     model = WhisperModel(
-        "base",
-        device="cpu",
-        compute_type="int8",       
-        cpu_threads=4,              
+        "medium",
+        device="cuda",
+        compute_type="float16",       
     )
 
     segments_gen, info = model.transcribe(
