@@ -1,5 +1,7 @@
   const OFFSCREEN_URL = chrome.runtime.getURL('offscreen.html');
 
+  let currentTabId = null;
+
   async function ensureOffscreen() {
     try {
       if (typeof chrome.offscreen.hasDocument === 'function') {
@@ -47,6 +49,16 @@
   async function handleStart(tabId, meetTitle, language, sendResponse) {
     try {
       await ensureOffscreen();
+
+      currentTabId = tabId;
+      chrome.tabs.sendMessage(tabId, { action: 'START_TRACKING' }, (res) => {
+        if (chrome.runtime.lastError) {
+          console.log('[MeetScribe] content.js did not respond — DOM tracking disabled');
+        } else {
+          console.log('[MeetScribe] DOM tracking started');
+        }
+      });
+
       chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
         if (chrome.runtime.lastError || !streamId) {
           sendResponse({
@@ -67,8 +79,20 @@
 
   async function handleStop(sendResponse) {
     try {
+      let domTimeline = [];
+      if (currentTabId) {
+        domTimeline = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(currentTabId, { action: 'STOP_TRACKING' }, (res) => {
+            if (chrome.runtime.lastError || !res?.ok) resolve([]);
+            else resolve(res.timeline || []);
+          });
+        });
+        console.log('[MeetScribe] DOM timeline:', domTimeline.length, 'events');
+      }
+      currentTabId = null;
+
       await ensureOffscreen();
-      forwardToOffscreen({ action: 'STOP_RECORDING' }, async (res) => {
+      forwardToOffscreen({ action: 'STOP_RECORDING', domTimeline }, async (res) => {
         if (res?.ok) {
           await chrome.storage.session.set({ lastResult: res });
           if (res.driveUrl) {

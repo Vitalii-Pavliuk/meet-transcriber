@@ -15,7 +15,7 @@ let timerInterval = null;
 let recordingStartTime = null;
 let pendingDriveUrl = null;
 let currentTranscript = '';
-let currentDriveFilename = null;
+let currentDriveTxtId = null;
 let speakerMapping = {};
 
 function formatTime(sec) {

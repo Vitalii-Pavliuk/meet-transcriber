@@ -13,7 +13,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.action === 'STOP_RECORDING') {
-    stopRecording(sendResponse);
+    stopRecording(sendResponse, msg.domTimeline || []);
     return true;
   }
   if (msg.action === 'CANCEL_RECORDING') {
@@ -83,7 +83,7 @@ function cancelRecording(sendResponse) {
   mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 
-function stopRecording(sendResponse) {
+function stopRecording(sendResponse, domTimeline) {
   if (!mediaRecorder) {
     sendResponse({ ok: false, error: 'Запис не активний' });
     return;
@@ -107,6 +107,7 @@ function stopRecording(sendResponse) {
     const blob = new Blob(audioChunks, { type: 'audio/webm' });
     const savedTitle = currentMeetTitle;
     const savedLanguage = currentLanguage;
+    const savedStartTime = recordingStartTime;
     audioChunks = [];
     recordingStartTime = null;
     mediaRecorder = null;
@@ -118,6 +119,10 @@ function stopRecording(sendResponse) {
       if (savedTitle) formData.append('meetTitle', savedTitle);
       if (savedLanguage && savedLanguage !== 'auto') {
         formData.append('language', savedLanguage);
+      }
+      if (domTimeline && domTimeline.length > 0) {
+        formData.append('domTimeline', JSON.stringify(domTimeline));
+        formData.append('recordingStartMs', String(savedStartTime));
       }
 
       const controller = new AbortController();

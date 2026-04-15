@@ -8,7 +8,7 @@ warnings.filterwarnings("ignore")
 from dotenv import load_dotenv
 load_dotenv()
 
-def transcribe(audio_path, language=None):
+def transcribe(audio_path, language=None, dom_timeline=None, recording_start_ms=None):
     from faster_whisper import WhisperModel
 
     hf_token = os.getenv("HF_TOKEN")
@@ -32,6 +32,13 @@ def transcribe(audio_path, language=None):
 
     segments = list(segments_gen)
     detected = info.language
+
+    if dom_timeline and recording_start_ms is not None:
+        import dom_align
+        result = dom_align.align_with_dom(segments, dom_timeline, recording_start_ms)
+        if result is not None:
+            sys.stderr.write("[info] DOM diarization used\n")
+            return result, detected
 
     speaker_segments = []
     if hf_token:
@@ -109,10 +116,27 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("audio_path")
     parser.add_argument("--language", default=None)
+    parser.add_argument("--dom-timeline", dest="dom_timeline_path", default=None,
+                        help="Path to JSON file with DOM speaker timeline")
+    parser.add_argument("--recording-start", dest="recording_start_ms", type=int, default=None,
+                        help="Recording start time in epoch milliseconds")
     args = parser.parse_args()
 
+    dom_timeline = None
+    if args.dom_timeline_path:
+        try:
+            with open(args.dom_timeline_path, 'r', encoding='utf-8') as f:
+                dom_timeline = json.load(f)
+        except Exception as e:
+            sys.stderr.write(f"[warning] Could not load DOM timeline: {e}\n")
+
     try:
-        transcript, detected_lang = transcribe(args.audio_path, args.language)
+        transcript, detected_lang = transcribe(
+            args.audio_path,
+            args.language,
+            dom_timeline=dom_timeline,
+            recording_start_ms=args.recording_start_ms,
+        )
         print(json.dumps({
             "transcript": transcript,
             "language":   detected_lang,

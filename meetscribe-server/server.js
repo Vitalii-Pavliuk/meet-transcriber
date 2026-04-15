@@ -10,6 +10,8 @@ const { Readable } = require('stream');
 const http = require('http');
 const url = require('url');
 
+const { randomUUID } = require('crypto');
+
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
@@ -93,13 +95,26 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
   const filename = safeTitle ? `${safeTitle}_${timestamp}` : `MeetScribe_${timestamp}`;
   const language = req.body?.language || null;
 
+  let domTimelinePath = null;
+  const recordingStartMs = req.body?.recordingStartMs || null;
+  if (req.body?.domTimeline && recordingStartMs) {
+    try {
+      domTimelinePath = path.join('uploads', `${randomUUID()}.json`);
+      fs.writeFileSync(domTimelinePath, req.body.domTimeline, 'utf-8');
+      console.log(`✓ DOM timeline збережено: ${domTimelinePath}`);
+    } catch (e) {
+      console.warn('⚠ Не вдалось зберегти DOM timeline:', e.message);
+      domTimelinePath = null;
+    }
+  }
+
   try {
     console.log(`\n→ Отримано файл: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)} МБ)`);
 
     await convertToMp3(webmPath, mp3Path);
     console.log('✓ Конвертація в mp3 завершена');
 
-    const transcript = await runWhisper(mp3Path, language);
+    const transcript = await runWhisper(mp3Path, language, domTimelinePath, recordingStartMs);
     console.log('✓ Транскрибація завершена, символів:', transcript.length);
 
     const localDir = path.join(__dirname, 'output');
@@ -118,12 +133,12 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
       console.warn('⚠ Drive upload пропущено:', driveErr.message);
     }
 
-    cleanup(webmPath, mp3Path);
+    cleanup(webmPath, mp3Path, domTimelinePath);
     res.json({ ok: true, transcript, driveUrl, driveFilename: filename });
 
   } catch (err) {
     console.error('✗ Помилка:', err.message);
-    cleanup(webmPath, mp3Path);
+    cleanup(webmPath, mp3Path, domTimelinePath);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -139,12 +154,15 @@ function convertToMp3(input, output) {
   });
 }
 
-function runWhisper(audioPath, language = null) {
+function runWhisper(audioPath, language = null, domTimelinePath = null, recordingStartMs = null) {
   return new Promise((resolve, reject) => {
     const timeout = 20 * 60 * 1000;
     const langArg = language ? ['--language', language] : [];
+    const domArgs = (domTimelinePath && recordingStartMs)
+      ? ['--dom-timeline', domTimelinePath, '--recording-start', String(recordingStartMs)]
+      : [];
 
-    const proc = spawn('python', ['-u', 'transcribe.py', audioPath, ...langArg], {
+    const proc = spawn('python', ['-u', 'transcribe.py', audioPath, ...langArg, ...domArgs], {
       cwd: __dirname,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     });
