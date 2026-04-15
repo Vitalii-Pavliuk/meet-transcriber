@@ -1,12 +1,7 @@
 const speakingTimeline = [];
-const activeSpeakers = new Map(); // Map<Element, startTimeMs>
-const SILENT_CLASS = 'gjg47c';
+const activeSpeakers = new Map();
 
-const UI_STRINGS = new Set([
-  'mute', 'unmute', 'pin', 'unpin', 'more options', 'remove',
-  'spotlight', 'open', 'close', 'you', 'tile', 'video', 'audio',
-  'present', 'presenting', 'hand raised',
-]);
+const SILENT_CLASS = 'gjg47c';
 
 function getSpeakerName(speakingEl) {
   let el = speakingEl;
@@ -14,7 +9,6 @@ function getSpeakerName(speakingEl) {
     el = el.parentElement;
     if (!el) break;
 
-    // Most reliable: Google Meet marks participant names with .notranslate
     const notranslate = el.querySelector('span.notranslate');
     if (notranslate) {
       const text = notranslate.textContent?.trim();
@@ -26,22 +20,6 @@ function getSpeakerName(speakingEl) {
       return nameEl.getAttribute('data-self-name') ||
              nameEl.getAttribute('data-participant-id') ||
              nameEl.textContent?.trim();
-    }
-
-    const ariaLabel = el.getAttribute('aria-label');
-    if (ariaLabel && ariaLabel.length > 0 && ariaLabel.length < 60 &&
-        !UI_STRINGS.has(ariaLabel.toLowerCase())) {
-      return ariaLabel;
-    }
-
-    const allEls = el.querySelectorAll('span, div');
-    for (const child of allEls) {
-      const text = child.textContent?.trim();
-      if (text && text.length > 1 && text.length < 40 &&
-          !text.includes('\n') && child.children.length === 0 &&
-          !UI_STRINGS.has(text.toLowerCase())) {
-        return text;
-      }
     }
   }
   return null;
@@ -59,9 +37,8 @@ function onSpeakingEnd(el) {
   const end = Date.now();
   activeSpeakers.delete(el);
 
-  if (end - start < 500) return; // ignore bursts shorter than 0.5s
+  if (end - start < 500) return;
 
-  // Resolve name at end — by now the participant tile is definitely rendered
   const name = getSpeakerName(el);
   speakingTimeline.push({ name, start, end });
   console.log(`[MeetScribe] ⏹ ${name ?? '?'}: ${((end - start) / 1000).toFixed(1)}s`);
